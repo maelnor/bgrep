@@ -42,6 +42,28 @@ gcc -Wall -Wextra -O2 -o bgrep bgrep.c
 
 #define BGREP_VERSION "0.3"
 
+/**
+ * @brief 
+ *
+ * @return  void 
+ * @retval   
+ * @see 
+ * @note 
+ * @author chenyuzhen
+ * @date 2012/12/15 11:23:17
+ **/
+void usage(){
+	const char * usage_desc=
+		"bgrep version: %s\n"
+		"usage: bgrep <hex> [<path> [...]] [options]\n"
+		"\tvalid options are\n"
+		"\t\t-B NUM     -- print {NUM} bytes before matching binary \n"
+		"\t\t-A NUM     -- print {NUM} bytes after matching binary \n"
+		"\t\t-C NUM     -- print {NUM} bytes before and after matching binary \n";
+
+	printf(usage_desc,BGREP_VERSION);
+}
+
 int ascii2hex(char c)
 {
 	if (c < '0')
@@ -60,7 +82,7 @@ int ascii2hex(char c)
 		return -1;
 }
 
-void searchfile(const char *filename, int fd, const unsigned char *value, const unsigned char *mask, int len)
+void searchfile(const char *filename, int fd, const unsigned char *value, const unsigned char *mask, int len,int before,int after)
 {
 	uint64_t offset = 0;
 	unsigned char buf[1024];
@@ -80,26 +102,50 @@ void searchfile(const char *filename, int fd, const unsigned char *value, const 
 			return;
 		} else if (!r)
 			return;
-		
-		int i;
-    uint64_t o;
+
+		int i, need;
+                uint64_t o;
 		for (o = offset ? 0 : len; o < (unsigned) r; ++o)
 		{
-			for (i = 0; i <= len; ++i)
+			for (i = 0; i <= len; ++i){
 				if ((buf[o + i] & mask[i]) != value[i])
 					break;
+			}
 			if (i > len)
 			{
-				printf("%s: %016" PRIx64 "\n", filename, (uint64_t)(offset + o - len));
+				need=before;
+				printf("%s: offset:%016" PRIx64 " find ", filename, (uint64_t)(offset + o - len));
+				while( (o-len) < need ){
+					need--;
+				}
+				
+				for(i = need; i > 0 ; i--){
+					printf("%02X",buf[o-i]);
+				}
+				
+				for(i=0; i <= len; ++i ){
+					printf("\e[1;33m%02X\e[0m",buf[o + i]);
+				}
+				
+				need=after;
+				while( o+need >=r ){
+					need--;
+				}
+				
+				for(i=1; i <= need; ++i){
+					printf("%02X",buf[ o+len+i ]);
+				}
+			
+				printf("\n");	
 			}
 		}
-		
+
 		offset += r;
-		
+
 	}
 }
 
-void recurse(const char *path, const unsigned char *value, const unsigned char *mask, int len)
+void recurse(const char *path, const unsigned char *value, const unsigned char *mask, int len,int before,int after)
 {
 	struct stat s;
 	if (stat(path, &s))
@@ -114,7 +160,7 @@ void recurse(const char *path, const unsigned char *value, const unsigned char *
 			perror(path);
 		else
 		{
-			searchfile(path, fd, value, mask, len);
+			searchfile(path, fd, value, mask, len, before, after);
 			close(fd);
 		}
 		return;
@@ -126,7 +172,7 @@ void recurse(const char *path, const unsigned char *value, const unsigned char *
 		perror(path);
 		exit(3);
 	}
-	
+
 	struct dirent *d;
 	while ((d = readdir(dir)))
 	{
@@ -136,9 +182,9 @@ void recurse(const char *path, const unsigned char *value, const unsigned char *
 		strcpy(newpath, path);
 		strcat(newpath, "/");
 		strcat(newpath, d->d_name);
-		recurse(newpath, value, mask, len);
+		recurse(newpath, value, mask, len, before, after);
 	}
-	
+
 	closedir(dir);
 }
 
@@ -146,14 +192,15 @@ int main(int argc, char **argv)
 {
 	unsigned char value[0x100], mask[0x100];
 	int len = 0;
-	
+	int before_count=4;
+	int after_count=4;
+
 	if (argc < 2)
 	{
-		fprintf(stderr, "bgrep version: %s\n", BGREP_VERSION);
-		fprintf(stderr, "usage: %s <hex> [<path> [...]]\n", *argv);
+		usage();
 		return 1;
 	}
-	
+
 	char *h = argv[1];
 	while (*h && h[1] && len < 0x100)
 	{
@@ -169,7 +216,7 @@ int main(int argc, char **argv)
 		{
 			int v0 = ascii2hex(*h++);
 			int v1 = ascii2hex(*h++);
-			
+
 			if ((v0 == -1) || (v1 == -1))
 			{
 				fprintf(stderr, "invalid hex string!\n");
@@ -178,20 +225,58 @@ int main(int argc, char **argv)
 			value[len] = (v0 << 4) | v1; mask[len++] = 0xFF;
 		}
 	}
-	
+
 	if (!len || *h)
 	{
 		fprintf(stderr, "invalid/empty search string\n");
 		return 2;
 	}
-	
+
 	if (argc < 3)
-		searchfile("stdin", 0, value, mask, len);
+		searchfile("stdin", 0, value, mask, len, before_count, after_count);
 	else
 	{
 		int c = 2;
-		while (c < argc)
-			recurse(argv[c++], value, mask, len);
+		int locale_argc=argc;
+		while(c < argc){
+			if(argv[c] && !strcmp(argv[c],"-B")){
+				c++;
+				if(locale_argc == argc){
+					locale_argc=c;
+				}
+				if(c < argc && argv[c]){
+					before_count=atoi(argv[c]);
+				}
+				c++;
+			}
+			else if(argv[c] && !strcmp(argv[c],"-A")){
+				c++;
+				if(locale_argc == argc){
+					locale_argc=c;
+				}
+				if(c < argc && argv[c]){
+					after_count=atoi(argv[c]);
+				}
+				c++;
+			}
+			else if(argv[c] && !strcmp(argv[c],"-C")){
+				c++;
+				if(locale_argc == argc){
+					locale_argc=c;
+				}
+				if(c < argc && argv[c]){
+					before_count=atoi(argv[c]);
+					after_count=atoi(argv[c]);
+				}
+				c++;
+			}
+			else{
+				c++;
+			}
+		}
+		c=2;
+		while (c < locale_argc)
+			recurse(argv[c++], value, mask, len,before_count,after_count);
 	}
 	return 0;
 }
