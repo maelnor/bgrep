@@ -59,7 +59,8 @@ void usage(){
 		"\tvalid options are\n"
 		"\t\t-B NUM     -- print {NUM} bytes before matching binary \n"
 		"\t\t-A NUM     -- print {NUM} bytes after matching binary \n"
-		"\t\t-C NUM     -- print {NUM} bytes before and after matching binary \n";
+		"\t\t-C NUM     -- print {NUM} bytes before and after matching binary \n"
+		"\t\t-t         -- use a text string instead of hex \n";
 
 	printf(usage_desc,BGREP_VERSION);
 }
@@ -148,6 +149,11 @@ void searchfile(const char *filename, int fd, const unsigned char *value, const 
 void recurse(const char *path, const unsigned char *value, const unsigned char *mask, int len,int before,int after)
 {
 	struct stat s;
+	if (!strcmp(path, "-"))
+	{
+		searchfile("stdin", 0, value, mask, len, before, after);
+		return;
+	}
 	if (stat(path, &s))
 	{
 		perror("stat");
@@ -191,9 +197,11 @@ void recurse(const char *path, const unsigned char *value, const unsigned char *
 int main(int argc, char **argv)
 {
 	unsigned char value[0x100], mask[0x100];
-	int len = 0;
+	int len = 0, text = 0, noargs = 0;
 	int before_count=4;
 	int after_count=4;
+	int c = 2;
+	int locale_argc=argc;
 
 	if (argc < 2)
 	{
@@ -202,42 +210,10 @@ int main(int argc, char **argv)
 	}
 
 	char *h = argv[1];
-	while (*h && h[1] && len < 0x100)
-	{
-		if (h[0] == '?' && h[1] == '?')
-		{
-			value[len] = mask[len] = 0;
-			len++;
-			h += 2;
-		} else if (h[0] == ' ')
-		{
-			h++;
-		} else
-		{
-			int v0 = ascii2hex(*h++);
-			int v1 = ascii2hex(*h++);
-
-			if ((v0 == -1) || (v1 == -1))
-			{
-				fprintf(stderr, "invalid hex string!\n");
-				return 2;
-			}
-			value[len] = (v0 << 4) | v1; mask[len++] = 0xFF;
-		}
-	}
-
-	if (!len || *h)
-	{
-		fprintf(stderr, "invalid/empty search string\n");
-		return 2;
-	}
-
 	if (argc < 3)
-		searchfile("stdin", 0, value, mask, len, before_count, after_count);
+		noargs = 1;
 	else
 	{
-		int c = 2;
-		int locale_argc=argc;
 		while(c < argc){
 			if(argv[c] && !strcmp(argv[c],"-B")){
 				c++;
@@ -270,10 +246,60 @@ int main(int argc, char **argv)
 				}
 				c++;
 			}
+			else if(argv[c] && !strcmp(argv[c],"-t")){
+				c++;
+				if(locale_argc == argc){
+					locale_argc=c;
+				}
+				text = 1;
+			}
 			else{
 				c++;
 			}
 		}
+	}
+
+	if (text) while ((value[len] = *h))
+	{
+		mask[len] = 0xFF;
+		h++;
+		if (++len == 0x100)
+			break;
+	}
+	else while (*h && h[1] && len < 0x100)
+	{
+		if (h[0] == '?' && h[1] == '?')
+		{
+			value[len] = mask[len] = 0;
+			len++;
+			h += 2;
+		} else if (h[0] == ' ')
+		{
+			h++;
+		} else
+		{
+			int v0 = ascii2hex(*h++);
+			int v1 = ascii2hex(*h++);
+
+			if ((v0 == -1) || (v1 == -1))
+			{
+				fprintf(stderr, "invalid hex string!\n");
+				return 2;
+			}
+			value[len] = (v0 << 4) | v1; mask[len++] = 0xFF;
+		}
+	}
+
+	if (!len || *h)
+	{
+		fprintf(stderr, "invalid/empty search string\n");
+		return 2;
+	}
+
+	if (noargs)
+		searchfile("stdin", 0, value, mask, len, before_count, after_count);
+	else
+	{
 		c=2;
 		while (c < locale_argc)
 			recurse(argv[c++], value, mask, len,before_count,after_count);
